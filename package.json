@@ -1,0 +1,51 @@
+{
+  "name": "opencode-local-context",
+  "version": "0.1.0",
+  "description": ".env for your OpenCode agents: inject local Markdown context and resolve environment placeholders in prompts.",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RWOverdijk/opencode-local-context.git"
+  },
+  "homepage": "https://github.com/RWOverdijk/opencode-local-context#readme",
+  "bugs": {
+    "url": "https://github.com/RWOverdijk/opencode-local-context/issues"
+  },
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "ai",
+    "local-context",
+    "prompt",
+    "environment-variables"
+  ],
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "opencode": ">=1.18.25"
+  },
+  "scripts": {
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "lint": "biome lint .",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "test:coverage": "bun test --coverage",
+    "check": "bun run format:check && bun run lint && bun run typecheck && bun test"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.11",
+    "@opencode-ai/plugin": "1.18.25",
+    "@types/bun": "latest",
+    "typescript": "5.9.3"
+  }
+}
