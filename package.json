@@ -1,51 +1,48 @@
 {
-  "name": "opencode-local-context",
-  "version": "0.1.0",
-  "description": ".env for your OpenCode agents: inject local Markdown context and resolve environment placeholders in prompts.",
-  "type": "module",
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/RWOverdijk/opencode-local-context.git"
-  },
-  "homepage": "https://github.com/RWOverdijk/opencode-local-context#readme",
-  "bugs": {
-    "url": "https://github.com/RWOverdijk/opencode-local-context/issues"
-  },
-  "keywords": [
-    "opencode",
-    "opencode-plugin",
-    "ai",
-    "local-context",
-    "prompt",
-    "environment-variables"
-  ],
-  "main": "./src/index.ts",
-  "exports": {
-    ".": "./src/index.ts"
-  },
-  "files": [
-    "src",
-    "README.md",
-    "LICENSE"
-  ],
-  "sideEffects": false,
-  "engines": {
-    "opencode": ">=1.18.25"
-  },
-  "scripts": {
-    "format": "biome format --write .",
-    "format:check": "biome format .",
-    "lint": "biome lint .",
-    "typecheck": "tsc --noEmit",
-    "test": "bun test",
-    "test:coverage": "bun test --coverage",
-    "check": "bun run format:check && bun run lint && bun run typecheck && bun test"
-  },
-  "devDependencies": {
-    "@biomejs/biome": "2.5.11",
-    "@opencode-ai/plugin": "1.18.25",
-    "@types/bun": "latest",
-    "typescript": "5.9.3"
-  }
+	"name": "opencode-local-context",
+	"version": "1.0.0",
+	"description": ".env for your OpenCode agents: inject local Markdown context and resolve environment placeholders in prompts.",
+	"type": "module",
+	"license": "MIT",
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"files": [
+		"src",
+		"README.md",
+		"LICENSE"
+	],
+	"engines": {
+		"node": ">=26"
+	},
+	"scripts": {
+		"test": "node --test",
+		"typecheck": "tsc --noEmit",
+		"check": "biome check . && npm run typecheck && npm test",
+		"agentic:verify": "biome check --write . && npm run typecheck && npm test"
+	},
+	"keywords": [
+		"opencode",
+		"opencode-plugin",
+		"ai",
+		"local-context",
+		"prompt",
+		"environment-variables"
+	],
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/aivi-hq/opencode-local-context.git"
+	},
+	"homepage": "https://github.com/aivi-hq/opencode-local-context#readme",
+	"bugs": {
+		"url": "https://github.com/aivi-hq/opencode-local-context/issues"
+	},
+	"dependencies": {
+		"@opencode/plugin": "^2.0.11"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.5.14",
+		"@types/node": "^26.6.2",
+		"typescript": "^7.0.2"
+	}
 }

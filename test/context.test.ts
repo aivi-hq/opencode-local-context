@@ -1,68 +1,83 @@
+// The file discovery is pure node fs behaviour; test it against real
+// throwaway directories.
+
+import assert from "node:assert/strict";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, test } from "node:test";
+
 import { loadContextFiles } from "../src/context.ts";
-import { cleanupDirectories } from "./support.ts";
+import { cleanupDirectories, rejectsMessage } from "./support.ts";
 
 afterEach(cleanupDirectories);
 
-describe("loadContextFiles", () => {
-  it("returns empty context when the directory is absent", async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), "local-context-"));
+test("returns empty context when the directory is absent", async () => {
+	const root = await mkdtemp(path.join(os.tmpdir(), "local-context-"));
 
-    const result = await loadContextFiles(
-      path.join(root, "missing"),
-      "context.local.md",
-      "context.{agent}.local.md",
-    );
+	const result = await loadContextFiles(
+		path.join(root, "missing"),
+		"context.local.md",
+		"context.{agent}.local.md",
+	);
 
-    expect(result.general).toBeUndefined();
-    expect(result.agents.size).toBe(0);
-  });
+	assert.equal(result.general, undefined);
+	assert.equal(result.agents.size, 0);
+});
 
-  it("loads and trims general and per-agent files while ignoring unsafe matches", async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), "local-context-"));
-    await writeFile(path.join(root, "context.local.md"), "\n General \n");
-    await writeFile(path.join(root, "context.review.local.md"), " Review only \n");
-    await writeFile(path.join(root, "context..local.md"), "no agent");
-    await writeFile(path.join(root, "context.empty.local.md"), " \n");
-    await writeFile(path.join(root, "unrelated.md"), "ignore");
-    await mkdir(path.join(root, "context.directory.local.md"));
+test("loads and trims general and per-agent files while ignoring unsafe matches", async () => {
+	const root = await mkdtemp(path.join(os.tmpdir(), "local-context-"));
+	await writeFile(path.join(root, "context.local.md"), "\n General \n");
+	await writeFile(
+		path.join(root, "context.review.local.md"),
+		" Review only \n",
+	);
+	await writeFile(path.join(root, "context..local.md"), "no agent");
+	await writeFile(path.join(root, "context.empty.local.md"), " \n");
+	await writeFile(path.join(root, "unrelated.md"), "ignore");
+	await mkdir(path.join(root, "context.directory.local.md"));
 
-    const result = await loadContextFiles(root, "context.local.md", "context.{agent}.local.md");
+	const result = await loadContextFiles(
+		root,
+		"context.local.md",
+		"context.{agent}.local.md",
+	);
 
-    expect(result.general).toBe("General");
-    expect([...result.agents]).toEqual([["review", "Review only"]]);
-    expect(result.sources.general).toBe(path.join(root, "context.local.md"));
-    expect(result.sources.agents.get("review")).toBe(path.join(root, "context.review.local.md"));
-  });
+	assert.equal(result.general, "General");
+	assert.deepEqual([...result.agents], [["review", "Review only"]]);
+	assert.equal(result.sources.general, path.join(root, "context.local.md"));
+	assert.equal(
+		result.sources.agents.get("review"),
+		path.join(root, "context.review.local.md"),
+	);
+});
 
-  it("supports a custom pattern with an empty suffix", async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), "local-context-"));
-    await writeFile(path.join(root, "agent-build"), "Build context");
+test("supports a custom pattern with an empty suffix", async () => {
+	const root = await mkdtemp(path.join(os.tmpdir(), "local-context-"));
+	await writeFile(path.join(root, "agent-build"), "Build context");
 
-    const result = await loadContextFiles(root, "all.md", "agent-{agent}");
+	const result = await loadContextFiles(root, "all.md", "agent-{agent}");
 
-    expect(result.agents.get("build")).toBe("Build context");
-  });
+	assert.equal(result.agents.get("build"), "Build context");
+});
 
-  it("wraps non-absence read errors with the source filename", async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), "local-context-"));
-    await mkdir(path.join(root, "context.local.md"));
+test("wraps non-absence read errors with the source filename", async () => {
+	const root = await mkdtemp(path.join(os.tmpdir(), "local-context-"));
+	await mkdir(path.join(root, "context.local.md"));
 
-    await expect(
-      loadContextFiles(root, "context.local.md", "context.{agent}.local.md"),
-    ).rejects.toThrow(`failed to read ${path.join(root, "context.local.md")}`);
-  });
+	await rejectsMessage(
+		loadContextFiles(root, "context.local.md", "context.{agent}.local.md"),
+		`failed to read ${path.join(root, "context.local.md")}`,
+	);
+});
 
-  it("wraps context-directory scan errors", async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), "local-context-"));
-    const file = path.join(root, "not-a-directory");
-    await writeFile(file, "content");
+test("wraps context-directory scan errors", async () => {
+	const root = await mkdtemp(path.join(os.tmpdir(), "local-context-"));
+	const file = path.join(root, "not-a-directory");
+	await writeFile(file, "content");
 
-    await expect(loadContextFiles(file, "missing.md", "agent-{agent}.md")).rejects.toThrow(
-      `failed to scan ${file}`,
-    );
-  });
+	await rejectsMessage(
+		loadContextFiles(file, "missing.md", "agent-{agent}.md"),
+		`failed to scan ${file}`,
+	);
 });

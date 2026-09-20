@@ -1,204 +1,279 @@
+// The plugin end to end: setup runs against the fake OpenCode 2 context from
+// support.ts, then the recorded agent transform and request hooks are
+// replayed exactly like OpenCode would around a real session.
+
+import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { Config } from "@opencode-ai/plugin";
-import { afterEach, describe, expect, it, mock } from "bun:test";
+import { afterEach, test } from "node:test";
+
 import plugin, { LocalContextPlugin } from "../src/index.ts";
 import {
-  cleanupDirectories,
-  createHooks,
-  pluginInput,
-  runConfig,
-  runSystem,
-  restoreEnv,
-  stubEnv,
-  temporaryProject,
+	cleanupDirectories,
+	createPlugin,
+	type FakeAgent,
+	rejectsMessage,
+	restoreEnv,
+	runAgents,
+	runSystem,
+	stubEnv,
+	temporaryProject,
 } from "./support.ts";
 
-afterEach(() => {
-  restoreEnv();
-  return cleanupDirectories();
+afterEach(async () => {
+	restoreEnv();
+	await cleanupDirectories();
 });
 
-describe("LocalContextPlugin", () => {
-  it("provides a v1 plugin module and named server export", () => {
-    expect(plugin.id).toBe("opencode-local-context");
-    expect(plugin.server).toBe(LocalContextPlugin);
-  });
+test("exports the OpenCode 2 plugin definition under both names", () => {
+	assert.equal(LocalContextPlugin.id, "opencode-local-context");
+	assert.equal(typeof LocalContextPlugin.setup, "function");
+	assert.equal(plugin, LocalContextPlugin);
+});
 
-  it("injects cached general context and interpolates every assembled system string", async () => {
-    const root = await temporaryProject();
-    const contextDirectory = path.join(root, ".opencode");
-    await mkdir(contextDirectory);
-    await writeFile(path.join(contextDirectory, "context.local.md"), "Local {env:TEAM}");
-    stubEnv("TEAM", "Search");
-    const hooks = await createHooks(root);
-    await writeFile(path.join(contextDirectory, "context.local.md"), "Changed after startup");
+test("injects cached general context and interpolates every assembled system string", async () => {
+	const root = await temporaryProject();
+	const contextDirectory = path.join(root, ".opencode");
+	await mkdir(contextDirectory);
+	await writeFile(
+		path.join(contextDirectory, "context.local.md"),
+		"Local {env:TEAM}",
+	);
+	stubEnv("TEAM", "Search");
+	const harness = await createPlugin(root);
+	await writeFile(
+		path.join(contextDirectory, "context.local.md"),
+		"Changed after startup",
+	);
 
-    const system = await runSystem(hooks, ["Global {env:TEAM}", "Custom {env:TEAM}"]);
-    await runSystem(hooks, system);
+	const system = await runSystem(harness.hooks, "context", [
+		"Global {env:TEAM}",
+		"Custom {env:TEAM}",
+	]);
+	const again = await runSystem(harness.hooks, "context", system);
 
-    expect(system).toEqual(["Global Search", "Custom Search", "Local Search"]);
-  });
+	assert.deepEqual(again, ["Global Search", "Custom Search", "Local Search"]);
+});
 
-  it("adds isolated per-agent context only to configured agents with prompts", async () => {
-    const root = await temporaryProject();
-    const contextDirectory = path.join(root, ".opencode");
-    await mkdir(contextDirectory);
-    await writeFile(path.join(contextDirectory, "context.review.local.md"), "Review {env:TEAM}");
-    await writeFile(path.join(contextDirectory, "context.build.local.md"), "Build locally");
-    await writeFile(path.join(contextDirectory, "context.unknown.local.md"), "Not configured");
-    stubEnv("TEAM", "platform");
-    const hooks = await createHooks(root);
-    const config: Config = {
-      agent: {
-        review: { prompt: "Base prompt", description: "For {env:TEAM}" },
-        other: { prompt: "Other prompt" },
-      },
-    } satisfies Config;
+test("registers the system transform for every request kind", async () => {
+	const root = await temporaryProject();
+	await mkdir(path.join(root, ".opencode"));
+	await writeFile(
+		path.join(root, ".opencode", "context.local.md"),
+		"Shared context",
+	);
+	const harness = await createPlugin(root);
 
-    await runConfig(hooks, config);
-    await runConfig(hooks, config);
+	assert.deepEqual([...harness.hooks.keys()].sort(), [
+		"compaction",
+		"context",
+		"generate",
+		"title",
+	]);
+	assert.deepEqual(
+		await runSystem(harness.hooks, "compaction", ["Summarize this"]),
+		["Summarize this", "Shared context"],
+	);
+});
 
-    expect(config.agent?.review?.prompt).toBe("Base prompt\n\nReview platform");
-    expect(config.agent?.review?.description).toBe("For platform");
-    expect(config.agent?.other?.prompt).toBe("Other prompt");
-    expect(config.agent?.build).toBeUndefined();
-    expect(config.agent?.unknown).toBeUndefined();
-  });
+test("adds isolated per-agent context only to agents with an explicit prompt", async () => {
+	const root = await temporaryProject();
+	const contextDirectory = path.join(root, ".opencode");
+	await mkdir(contextDirectory);
+	await writeFile(
+		path.join(contextDirectory, "context.review.local.md"),
+		"Review {env:TEAM}",
+	);
+	await writeFile(
+		path.join(contextDirectory, "context.build.local.md"),
+		"Build locally",
+	);
+	await writeFile(
+		path.join(contextDirectory, "context.unknown.local.md"),
+		"Not configured",
+	);
+	stubEnv("TEAM", "platform");
+	const harness = await createPlugin(root);
+	const agents: Record<string, FakeAgent | undefined> = {
+		review: {
+			id: "review",
+			name: "Review",
+			system: "Base prompt",
+			description: "For {env:TEAM}",
+		},
+		other: { id: "other", name: "Other", system: "Other prompt" },
+	};
 
-  it("does not replace OpenCode defaults for a configured agent without a prompt", async () => {
-    const root = await temporaryProject();
-    await mkdir(path.join(root, ".opencode"));
-    await writeFile(path.join(root, ".opencode", "context.review.local.md"), "Only context");
-    const hooks = await createHooks(root);
-    const config: Config = { agent: { review: {} } };
+	await runAgents(harness.transforms, agents);
+	await runAgents(harness.transforms, agents);
 
-    await runConfig(hooks, config);
+	assert.equal(agents.review?.system, "Base prompt\n\nReview platform");
+	assert.equal(agents.review?.description, "For platform");
+	assert.equal(agents.other?.system, "Other prompt");
+	assert.equal(agents.build, undefined);
+	assert.equal(agents.unknown, undefined);
+});
 
-    expect(config.agent?.review?.prompt).toBeUndefined();
-  });
+test("does not replace OpenCode defaults for an agent without a prompt", async () => {
+	const root = await temporaryProject();
+	await mkdir(path.join(root, ".opencode"));
+	await writeFile(
+		path.join(root, ".opencode", "context.review.local.md"),
+		"Only context",
+	);
+	const harness = await createPlugin(root);
+	const agents: Record<string, FakeAgent | undefined> = {
+		review: { id: "review", name: "Review" },
+	};
 
-  it("does not synthesize built-in overrides when the incoming config has no agent object", async () => {
-    const root = await temporaryProject();
-    await mkdir(path.join(root, ".opencode"));
-    await writeFile(path.join(root, ".opencode", "context.explore.local.md"), "Explore locally");
-    const hooks = await createHooks(root);
-    const config: Config = {};
+	await runAgents(harness.transforms, agents);
 
-    await runConfig(hooks, config);
+	assert.equal(agents.review?.system, undefined);
+});
 
-    expect(config.agent).toBeUndefined();
-  });
+test("does not synthesize agents when the agent registry is empty", async () => {
+	const root = await temporaryProject();
+	await mkdir(path.join(root, ".opencode"));
+	await writeFile(
+		path.join(root, ".opencode", "context.explore.local.md"),
+		"Explore locally",
+	);
+	const harness = await createPlugin(root);
+	const agents: Record<string, undefined> = {};
 
-  it("does nothing when context files and agent config are absent", async () => {
-    const root = await temporaryProject();
-    const hooks = await createHooks(root);
-    const config = {} satisfies Config;
+	await runAgents(harness.transforms, agents);
 
-    await runConfig(hooks, config);
+	assert.deepEqual(agents, {});
+});
 
-    expect(await runSystem(hooks, ["Original"])).toEqual(["Original"]);
-    expect(config).toEqual({});
-  });
+test("does nothing when context files and agents are absent", async () => {
+	const root = await temporaryProject();
+	const harness = await createPlugin(root);
+	const agents = {};
 
-  it("tolerates undefined agent entries and sparse assembled system arrays", async () => {
-    const root = await temporaryProject();
-    const hooks = await createHooks(root);
-    const config = { agent: { unavailable: undefined } } as Config;
-    const system = ["First", undefined, "Third"] as unknown as string[];
+	assert.deepEqual(await runSystem(harness.hooks, "context", ["Original"]), [
+		"Original",
+	]);
+	await runAgents(harness.transforms, agents);
+	assert.deepEqual(agents, {});
+});
 
-    await runConfig(hooks, config);
+test("can disable all interpolation while retaining placeholders", async () => {
+	const root = await temporaryProject();
+	await mkdir(path.join(root, ".opencode"));
+	await writeFile(
+		path.join(root, ".opencode", "context.local.md"),
+		"{env:MISSING}",
+	);
+	await writeFile(
+		path.join(root, ".opencode", "context.review.local.md"),
+		"{env:MISSING}",
+	);
+	const harness = await createPlugin(root, { interpolate: false });
+	const agents = {
+		review: {
+			id: "review",
+			name: "Review",
+			system: "Prompt {env:MISSING}",
+			description: "Desc {env:MISSING}",
+		},
+	};
 
-    expect(await runSystem(hooks, system)).toEqual([
-      "First",
-      undefined,
-      "Third",
-    ] as unknown as string[]);
-  });
+	await runAgents(harness.transforms, agents);
 
-  it("can disable all interpolation while retaining placeholders", async () => {
-    const root = await temporaryProject();
-    await mkdir(path.join(root, ".opencode"));
-    await writeFile(path.join(root, ".opencode", "context.local.md"), "{env:MISSING}");
-    await writeFile(path.join(root, ".opencode", "context.review.local.md"), "{env:MISSING}");
-    const hooks = await createHooks(root, { interpolate: false });
-    const config = {
-      agent: { review: { prompt: "Prompt {env:MISSING}", description: "Desc {env:MISSING}" } },
-    } satisfies Config;
+	assert.deepEqual(agents.review, {
+		id: "review",
+		name: "Review",
+		system: "Prompt {env:MISSING}\n\n{env:MISSING}",
+		description: "Desc {env:MISSING}",
+	});
+	assert.deepEqual(
+		await runSystem(harness.hooks, "context", ["System {env:MISSING}"]),
+		["System {env:MISSING}", "{env:MISSING}"],
+	);
+});
 
-    await runConfig(hooks, config);
+test("fails clearly at startup when local context references a missing variable", async () => {
+	const root = await temporaryProject();
+	await mkdir(path.join(root, ".opencode"));
+	await writeFile(
+		path.join(root, ".opencode", "context.local.md"),
+		"{env:NOT_SET}",
+	);
 
-    expect(config.agent.review).toEqual({
-      prompt: "Prompt {env:MISSING}\n\n{env:MISSING}",
-      description: "Desc {env:MISSING}",
-    });
-    expect(await runSystem(hooks, ["System {env:MISSING}"])).toEqual([
-      "System {env:MISSING}",
-      "{env:MISSING}",
-    ]);
-  });
+	await rejectsMessage(createPlugin(root), "environment variable NOT_SET");
+});
 
-  it("fails clearly at initialization when local context references a missing variable", async () => {
-    const root = await temporaryProject();
-    await mkdir(path.join(root, ".opencode"));
-    await writeFile(path.join(root, ".opencode", "context.local.md"), "{env:NOT_SET}");
+test("fails clearly when an agent prompt or assembled system references a missing variable", async () => {
+	const root = await temporaryProject();
+	const harness = await createPlugin(root);
 
-    await expect(createHooks(root)).rejects.toThrow("environment variable NOT_SET");
-  });
+	await rejectsMessage(
+		runAgents(harness.transforms, {
+			review: { id: "review", system: "{env:NOT_SET}" },
+		}),
+		'agent "review" prompt',
+	);
+	await rejectsMessage(
+		runSystem(harness.hooks, "context", ["{env:NOT_SET}"]),
+		"assembled system prompt 1",
+	);
+});
 
-  it("fails clearly when a configured prompt or assembled system references a missing variable", async () => {
-    const root = await temporaryProject();
-    const hooks = await createHooks(root);
+test("warns once per missing variable and substitutes empty strings", async () => {
+	const root = await temporaryProject();
+	await mkdir(path.join(root, ".opencode"));
+	await writeFile(
+		path.join(root, ".opencode", "context.local.md"),
+		"Missing {env:SAME_MISSING}",
+	);
+	const warnings: string[] = [];
+	const originalWarn = console.warn;
+	console.warn = (message?: unknown) => {
+		warnings.push(String(message));
+	};
 
-    await expect(
-      runConfig(hooks, { agent: { review: { prompt: "{env:NOT_SET}" } } }),
-    ).rejects.toThrow('agent "review" prompt');
-    await expect(runSystem(hooks, ["{env:NOT_SET}"])).rejects.toThrow("assembled system prompt 1");
-  });
+	try {
+		const harness = await createPlugin(root, { missingEnv: "warn" });
+		await runSystem(harness.hooks, "context", [
+			"Again {env:SAME_MISSING}",
+			"Other {env:OTHER_MISSING}",
+		]);
+		await runSystem(harness.hooks, "context", ["Again {env:SAME_MISSING}"]);
+	} finally {
+		console.warn = originalWarn;
+	}
 
-  it("warns once per missing variable and substitutes empty strings", async () => {
-    const root = await temporaryProject();
-    await mkdir(path.join(root, ".opencode"));
-    await writeFile(path.join(root, ".opencode", "context.local.md"), "Missing {env:SAME_MISSING}");
-    const log = mock(async () => {
-      throw new Error("logger unavailable");
-    });
-    const pluginMock = pluginInput(root, log);
-    const hooks = await LocalContextPlugin(pluginMock.input, { missingEnv: "warn" });
+	assert.equal(warnings.length, 2);
+	assert.match(warnings[0] ?? "", /SAME_MISSING/);
+	assert.match(warnings[1] ?? "", /OTHER_MISSING/);
+});
 
-    await runSystem(hooks, ["Again {env:SAME_MISSING}", "Other {env:OTHER_MISSING}"]);
-    await runSystem(hooks, ["Again {env:SAME_MISSING}"]);
-    await new Promise((resolve) => setTimeout(resolve, 0));
+test("supports empty missing policy and directory-rooted custom paths", async () => {
+	const root = await temporaryProject();
+	const directory = path.join(root, "packages", "app");
+	await mkdir(path.join(directory, "developer"), { recursive: true });
+	await writeFile(
+		path.join(directory, "developer", "all.md"),
+		"Value:{env:NOT_SET}",
+	);
+	await writeFile(
+		path.join(directory, "developer", "agent-review.md"),
+		"Agent:{env:NOT_SET}",
+	);
+	const harness = await createPlugin(root, {
+		root: "directory",
+		contextDir: "developer",
+		generalFile: "all.md",
+		agentFilePattern: "agent-{agent}.md",
+		missingEnv: "empty",
+	});
+	const agents: Record<string, FakeAgent | undefined> = {
+		review: { id: "review", name: "Review", system: "Base" },
+	};
 
-    expect(log).toHaveBeenCalledTimes(2);
-    expect(log).toHaveBeenCalledWith({
-      body: expect.objectContaining({
-        service: "opencode-local-context",
-        level: "warn",
-        message: expect.stringContaining("SAME_MISSING"),
-      }),
-    });
-  });
+	await runAgents(harness.transforms, agents);
 
-  it("supports empty missing policy and directory-rooted custom paths", async () => {
-    const root = await temporaryProject();
-    const directory = path.join(root, "packages", "app");
-    await mkdir(path.join(directory, "developer"), { recursive: true });
-    await writeFile(path.join(directory, "developer", "all.md"), "Value:{env:NOT_SET}");
-    await writeFile(path.join(directory, "developer", "agent-review.md"), "Agent:{env:NOT_SET}");
-    const pluginMock = pluginInput(root);
-    const hooks = await LocalContextPlugin(pluginMock.input, {
-      root: "directory",
-      contextDir: "developer",
-      generalFile: "all.md",
-      agentFilePattern: "agent-{agent}.md",
-      missingEnv: "empty",
-    });
-    const config: Config = { agent: { review: { prompt: "Base" } } };
-
-    await runConfig(hooks, config);
-
-    expect(config.agent?.review?.prompt).toBe("Base\n\nAgent:");
-    expect(await runSystem(hooks, [])).toEqual(["Value:"]);
-  });
+	assert.equal(agents.review?.system, "Base\n\nAgent:");
+	assert.deepEqual(await runSystem(harness.hooks, "context", []), ["Value:"]);
 });

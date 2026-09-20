@@ -1,42 +1,54 @@
-import { describe, expect, it, mock } from "bun:test";
+// The interpolation is a pure function over a text and an environment; test
+// it as such.
+
+import assert from "node:assert/strict";
+import test from "node:test";
+
 import { interpolateEnv } from "../src/interpolate.ts";
+import { throwsMessage } from "./support.ts";
 
-describe("interpolateEnv", () => {
-  it("resolves only explicitly referenced valid environment variables", () => {
-    const env = { TEAM: "platform", UNUSED_SECRET: "do-not-read", EMPTY: "" };
+test("resolves only explicitly referenced valid environment variables", () => {
+	const env = { TEAM: "platform", UNUSED_SECRET: "do-not-read", EMPTY: "" };
 
-    expect(interpolateEnv("Team: {env:TEAM}; empty: {env:EMPTY}", { env })).toBe(
-      "Team: platform; empty: ",
-    );
-    const shellStyle = "$" + "{TEAM}";
-    expect(interpolateEnv(`{env:NOT-VALID} ${shellStyle}`, { env })).toBe(
-      `{env:NOT-VALID} ${shellStyle}`,
-    );
-  });
+	assert.equal(
+		interpolateEnv("Team: {env:TEAM}; empty: {env:EMPTY}", { env }),
+		"Team: platform; empty: ",
+	);
+	const shellStyle = "$" + "{TEAM}";
+	assert.equal(
+		interpolateEnv(`{env:NOT-VALID} ${shellStyle}`, { env }),
+		`{env:NOT-VALID} ${shellStyle}`,
+	);
+});
 
-  it("throws a clear error for a missing variable by default", () => {
-    expect(() => interpolateEnv("Hello {env:MISSING}", { env: {}, source: "local.md" })).toThrow(
-      "environment variable MISSING referenced by {env:MISSING} is not set (local.md)",
-    );
-  });
+test("throws a clear error for a missing variable by default", () => {
+	throwsMessage(
+		() =>
+			interpolateEnv("Hello {env:MISSING}", { env: {}, source: "local.md" }),
+		"environment variable MISSING referenced by {env:MISSING} is not set (local.md)",
+	);
+});
 
-  it("warns and substitutes an empty string under the warn policy", () => {
-    const onMissing = mock(() => undefined);
+test("warns and substitutes an empty string under the warn policy", () => {
+	const missing: Array<[string, string]> = [];
 
-    expect(
-      interpolateEnv("{env:FIRST}/{env:SECOND}", {
-        env: {},
-        policy: "warn",
-        onMissing,
-      }),
-    ).toBe("/");
-    expect(onMissing).toHaveBeenCalledTimes(2);
-    expect(onMissing).toHaveBeenCalledWith("FIRST", "prompt");
-  });
+	assert.equal(
+		interpolateEnv("{env:FIRST}/{env:SECOND}", {
+			env: {},
+			policy: "warn",
+			onMissing: (name, source) => missing.push([name, source]),
+		}),
+		"/",
+	);
+	assert.deepEqual(missing, [
+		["FIRST", "prompt"],
+		["SECOND", "prompt"],
+	]);
+});
 
-  it("silently substitutes an empty string under the empty policy", () => {
-    expect(interpolateEnv("before {env:MISSING} after", { env: {}, policy: "empty" })).toBe(
-      "before  after",
-    );
-  });
+test("silently substitutes an empty string under the empty policy", () => {
+	assert.equal(
+		interpolateEnv("before {env:MISSING} after", { env: {}, policy: "empty" }),
+		"before  after",
+	);
 });
