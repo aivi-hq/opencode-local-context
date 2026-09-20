@@ -42,6 +42,31 @@ not live in shared instructions: your team, development environment,
 issue-tracker project, preferred test device, or other developer-specific
 context.
 
+## Quickstart
+
+```sh
+# 1. Install the plugin for every project
+#    (or add "opencode-local-context" to the plugins array of ./opencode.jsonc)
+opencode plugin add opencode-local-context
+
+# 2. Write your project context and keep it out of git
+mkdir -p .opencode
+cat > .opencode/context.local.md <<'EOF'
+# Local developer context
+
+- My team is {env:TEAM_NAME}.
+- My local service runs at http://localhost:3000.
+EOF
+echo '.opencode/context*.local.md' >> .gitignore
+
+# 3. Start OpenCode with the referenced variables available
+TEAM_NAME="team-analytics" opencode
+```
+
+Done—every agent now sees the resolved context. Quit and restart OpenCode
+after editing the file; each project supplies its own
+`.opencode/context.local.md`, so one global install serves them all.
+
 ## Features
 
 - Adds `.opencode/context.local.md` to every assembled system prompt—the
